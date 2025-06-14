@@ -1,0 +1,131 @@
+# Student Performance Prediction with High-Accuracy Models
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.ensemble import RandomForestClassifier, StackingClassifier
+from sklearn.svm import SVC
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.multioutput import MultiOutputClassifier
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+
+# Load and preprocess data
+df = pd.read_csv("/content/archive (11).zip")
+
+# Encode categorical features
+le = LabelEncoder()
+for col in df.columns:
+    if df[col].dtype == 'object':
+        df[col] = le.fit_transform(df[col])
+
+# Feature engineering
+df['avg_score'] = df[['math score', 'reading score', 'writing score']].mean(axis=1)
+df['score_std'] = df[['math score', 'reading score', 'writing score']].std(axis=1)
+df['study_efficiency'] = df['avg_score'] / (df['score_std'] + 1)
+df['risk_zone'] = pd.cut(df['avg_score'], bins=[0,50,60,75,100],
+                         labels=["Failing", "At-Risk", "Average", "Topper"])
+
+# Targets
+y1 = np.where(df['avg_score'] >= 60, 1, 0)
+y2 = df['risk_zone'].cat.codes
+y = pd.DataFrame({'pass_fail': y1, 'risk_level': y2})
+
+# Features
+X = df.drop(columns=['math score', 'reading score', 'writing score', 'avg_score', 'risk_zone'])
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+
+# Train/test split
+X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.3, random_state=42)
+
+# Stacking ensemble model
+base_models = [
+    ('rf', RandomForestClassifier()),
+    ('svm', SVC(probability=True)),
+    ('knn', KNeighborsClassifier())
+]
+stacking_model = StackingClassifier(estimators=base_models, final_estimator=LogisticRegression())
+multi_model = MultiOutputClassifier(stacking_model)
+multi_model.fit(X_train, y_train)
+
+# Prediction
+y_pred = multi_model.predict(X_test)
+
+# Evaluation
+pass_acc = accuracy_score(y_test['pass_fail'], y_pred[:, 0])
+risk_acc = accuracy_score(y_test['risk_level'], y_pred[:, 1])
+print(f"Pass/Fail Accuracy: {pass_acc:.4f}")
+print(f"Risk Level Accuracy: {risk_acc:.4f}")
+print("\nClassification Report (Pass/Fail):")
+print(classification_report(y_test['pass_fail'], y_pred[:, 0]))
+print("\nClassification Report (Risk Level):")
+print(classification_report(y_test['risk_level'], y_pred[:, 1]))
+
+# Confusion Matrix
+plt.figure(figsize=(6, 4))
+sns.heatmap(confusion_matrix(y_test['pass_fail'], y_pred[:, 0]), annot=True, cmap='Blues', fmt='d')
+plt.title("Confusion Matrix - Pass/Fail")
+plt.xlabel("Predicted")
+plt.ylabel("Actual")
+plt.show()
+
+# Model comparison
+safe_models = {
+    "RandomForest": RandomForestClassifier(),
+    "SVM": SVC(probability=True),
+    "KNN": KNeighborsClassifier(),
+    "LogisticRegression": LogisticRegression()
+}
+
+accuracies = {}
+for name, model in safe_models.items():
+    clf = MultiOutputClassifier(model)
+    clf.fit(X_train, y_train)
+    y_pred = clf.predict(X_test)
+    acc = accuracy_score(y_test['pass_fail'], y_pred[:, 0])
+    accuracies[name] = acc
+
+plt.figure(figsize=(8,5))
+plt.barh(list(accuracies.keys()), list(accuracies.values()), color='mediumseagreen')
+plt.xlabel("Accuracy (Pass/Fail Prediction)")
+plt.title("Model Accuracy Comparison")
+plt.xlim(0.5, 1)
+plt.grid(True, axis='x')
+plt.tight_layout()
+plt.show()
+
+# Annotate best model result
+best_model = max(accuracies, key=accuracies.get)
+best_accuracy = accuracies[best_model]
+print(f"\nBest performing model is: {best_model} with accuracy: {best_accuracy:.4f}")
+
+# Risk Intervention Engine
+df['risk_zone'] = pd.cut(df['avg_score'], bins=[0,50,60,75,100], labels=["Failing", "At-Risk", "Average", "Topper"])
+def intervene(row):
+    if row['risk_zone'] == "Failing":
+        return "Immediate intervention needed"
+    elif row['risk_zone'] == "At-Risk":
+        return "Provide mentoring"
+    elif row['risk_zone'] == "Topper":
+        return "Consider gifted programs"
+    return "Normal monitoring"
+df['intervention'] = df.apply(intervene, axis=1)
+print("\nSample Interventions:")
+print(df[['avg_score', 'risk_zone', 'intervention']].head())
+
+# Correlation Heatmap for numeric features
+plt.figure(figsize=(10,6))
+sns.heatmap(df.select_dtypes(include=[np.number]).corr(), annot=True, cmap='coolwarm')
+plt.title("Correlation Heatmap")
+plt.show()
+
+# Final summary
+print("\nSummary:")
+print(f"Stacked Model Accuracy (Pass/Fail): {pass_acc:.4f}")
+print(f"Stacked Model Accuracy (Risk Level): {risk_acc:.4f}")
+print(f"Best standalone model: {best_model} with accuracy {best_accuracy:.4f}")
